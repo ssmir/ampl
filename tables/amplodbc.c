@@ -1955,6 +1955,7 @@ Write_odbc(AmplExports *ae, TableInfo *TI)
 		j += 3;
 		}
 	strcpy(it+j,/*(*/")");
+	LOG(ae, "SQLPrepare(%s)", it);
 	if (prc(&h, "Prepare(INSERT)", SQLPrepare(hs, UC it, SQL_NTS))) {
  failed:
 		TI->Errmsg = "Unexpected ODBC failure";
@@ -1977,6 +1978,7 @@ Write_odbc(AmplExports *ae, TableInfo *TI)
 					SQL_DOUBLE, 0, 0, rb + i, 0, NULL);
 		}
 	nr = TI->nrows;
+	LOG(ae, "Writing %d rows", nr);
 	for(ir = 0; ir < nr; ir++) {
 		db = TI->cols;
 		ts1 = ts0;
