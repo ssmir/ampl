@@ -350,6 +350,8 @@ LibraryImpl::LibraryImpl(const char *name) : AmplExports(), name_(name) {
   Fseek = fseek;
   PrintF = printf;
   FprintF = fprintf;
+  VfprintF = vfprintf;
+  Fputs = fputs;
   StdErr = stderr;
   Qsortv = qsortv;
   Getenv = getenv;
