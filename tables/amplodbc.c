@@ -180,7 +180,7 @@ prc(HInfo *h, char *who, int i)
 		{ "SQL_HANDLE_ENV",  SQL_HANDLE_ENV,  offset_of(HInfo, env) }};
 #endif
 
-	LOG(ae, "%s returned %d", who, i);
+	LOG(ae, "%s: returned %d", who, i);
 
 	if (i == SQL_SUCCESS)
 		return 0;
@@ -1955,7 +1955,7 @@ Write_odbc(AmplExports *ae, TableInfo *TI)
 		j += 3;
 		}
 	strcpy(it+j,/*(*/")");
-	LOG(ae, "SQLPrepare(%s)", it);
+	LOG(ae, "SQLPrepare: %s", it);
 	if (prc(&h, "Prepare(INSERT)", SQLPrepare(hs, UC it, SQL_NTS))) {
  failed:
 		TI->Errmsg = "Unexpected ODBC failure";
