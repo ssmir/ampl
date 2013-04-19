@@ -41,6 +41,7 @@ THIS SOFTWARE.
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "arith.h"	/* for LONG_LONG_POINTERS */
 #include "funcadd.h"
 
@@ -138,6 +139,23 @@ Malloc(AmplExports *ae, size_t len)
 
 #define offset_of(t,x) ((size_t)&((t*)0)->x)
 
+ static FILE *log_file;
+
+ static void LOG(AmplExports *ae, const char *format, ...)
+{
+	char buffer[24];
+	time_t now = time(0);
+	va_list args;
+	if (!log_file)
+		log_file = fopen("ampltabl.log", "a");
+	strftime(buffer, sizeof(buffer), "[%Y-%m-%d %H:%M:%S] ", gmtime(&now));
+	fputs(buffer, log_file);
+	va_start(args, format);
+	vfprintf(log_file, format, args);
+	va_end(args);
+	fputc('\n', log_file);
+	}
+
  static int
 prc(HInfo *h, char *who, int i)
 {
@@ -146,7 +164,7 @@ prc(HInfo *h, char *who, int i)
 		int hkind;
 		size_t hoff;
 		} HandleStuff;
-	AmplExports *ae;
+	AmplExports *ae = h->AE;
 	SQLINTEGER native_errno;
 	SWORD emlen;
 	UCHAR *errmsg, errmsg0[SQL_MAX_MESSAGE_LENGTH], sqlstate[64];
@@ -162,6 +180,8 @@ prc(HInfo *h, char *who, int i)
 		{ "SQL_HANDLE_ENV",  SQL_HANDLE_ENV,  offset_of(HInfo, env) }};
 #endif
 
+	LOG(ae, "%s returned %d", who, i);
+
 	if (i == SQL_SUCCESS)
 		return 0;
 	rv = 1;
@@ -171,7 +191,6 @@ prc(HInfo *h, char *who, int i)
 		rv = 0;
 		}
 	errmsg = errmsg0;
-	ae = h->AE;
 	printf("%s returned %d\n", who, i);
 #if 0
 	errmsglen = sizeof(errmsg0);
