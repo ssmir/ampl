@@ -112,6 +112,7 @@ HInfo {
 	long	firstbadrow;
 	int	*coltypes;
 	int	*colperm;
+	int	skip_addrows;
 	TIMESTAMP_STRUCT *ts;
 	/* for scrunch and ascrunch... */
 	char	*Missing;
@@ -146,18 +147,33 @@ Malloc(AmplExports *ae, size_t len)
 	char buffer[24];
 	time_t now = time(0);
 	va_list args;
+	assert(ae);
 	if (!log_file)
 		log_file = fopen("ampltabl.log", "a");
-	strftime(buffer, sizeof(buffer), "[%Y-%m-%d %H:%M:%S] ", gmtime(&now));
-	fputs(buffer, log_file);
+	strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", gmtime(&now));
+	fprintf(log_file, "[%s %f] ", buffer, ((double)clock()) / CLOCKS_PER_SEC);
 	va_start(args, format);
 	vfprintf(log_file, format, args);
 	va_end(args);
 	fputc('\n', log_file);
 	}
 
+ static int LOGRETURN(AmplExports *ae, const char *func_name, int result) {
+	LOG(ae, "%s: returned %d", func_name, result);
+	return result;
+	}
+
+
+ static void *LOGRETURNP(AmplExports *ae, const char *func_name, void *result) {
+	LOG(ae, "%s: leave", func_name);
+	return result;
+	}
+
+#define LOGCALL(ae, f, args) (LOG(ae, "%s: enter", #f), LOGRETURN(ae, #f, f args))
+#define LOGCALLP(ae, f, args) (LOG(ae, "%s: enter", #f), LOGRETURNP(ae, #f, f args))
+
  static int
-prc(HInfo *h, char *who, int i)
+prc_(HInfo *h, char *who, int i)
 {
 	typedef struct HandleStuff {
 		const char *desc;
@@ -248,6 +264,9 @@ prc(HInfo *h, char *who, int i)
 		free(errmsg);
 	return rv;
 	}
+
+#define prc(h, who, call) \
+  (LOG(ae, "%s: enter", who), prc_(h, who, call))
 
  static int
 prcnr(HInfo *h, char *who, int i)	/* variant for SQLGetNumResultCols */
@@ -560,6 +579,7 @@ ext_to_drv(UCHAR *ext, UCHAR *eend, HInfo *h)
 
 	DRV_desc *ds;
 
+	LOG(h->AE, "ext_to_drv");
 	for(ds = get_ds0(h); ds; ds = ds->next)
 		if (match(CC ds->ext, ext, eend))
 			break;
@@ -661,6 +681,7 @@ ODBC_check(AmplExports *AE, TableInfo *TI, HInfo *h)
 	char *s;
 	int i = TI->nstrings;
 
+	LOG(AE, "ODBC_check");
 	if (i < 1 || (strcmp(s = TI->strings[0], "ODBC") && strcmp(s, "odbc")))
 		return DB_Refuse;
 	if (i < 2 || i > 5) {
@@ -872,6 +893,7 @@ not_found(AmplExports *ae, TableInfo *TI, char *dsn, FILE **fp)
 #endif
 	struct stat stb;
 
+	LOG(ae, "not_found");
 	if ((fp1 = fp))
 		mode = "r";
 	else {
@@ -958,13 +980,14 @@ dsname_ds(HInfo *h, char *dsname)
  static int
 parse_dsn_file(HInfo *h, char **dsnp)
 {
-	AmplExports *ae;
+	AmplExports *ae = h->AE;
 	FILE *f;
 	TableInfo *TI;
 	char buf[Bsize], *dsn, *s, *s0, *s1;
 	int rv;
 	long L;
 
+	LOG(ae, "parse_dsn_file");
 	rv = 0;
 	if (not_found(ae = h->AE, TI = h->TI, dsn = *dsnp, &f))
 		goto ret;
@@ -1175,6 +1198,7 @@ colname_adjust(HInfo *h, TableInfo *TI)
 	char **cn;
 	int *ct, i, k, nc, nt;
 
+	LOG(h->AE, "colname_adjust");
 	cn = TI->colnames;
 	nc = TI->arity + TI->ncols;
 	h->coltypes = h->colperm = ct = 0;
@@ -1284,6 +1308,7 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 	unsigned int ui;
 	int dsn = 0;
 
+	LOG(ae, "Connect: enter");
 	*dsp = 0;
 	h->env = SQL_NULL_HENV;
 	h->hc = SQL_NULL_HDBC;
@@ -1293,6 +1318,7 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 	dsname = dsname0 = strs[1];
 	tname = 0;
 	verbose = 0;
+	h->skip_addrows = 0;
 	h->wrmode = wr_drop;
 	h->nsmix = 1;
 	h->oldquotes = 0;
@@ -1423,6 +1449,7 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 		tname = TI->tname;
 	wantretry = 1;
 	h->sqldb = verbose & 2;
+	h->skip_addrows = verbose & 4;
 	h->verbose = verbose &= 1;
 
 	/* Check the table and column names. */
@@ -1436,7 +1463,7 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 		}
 	}
 
-	if (SQLAllocEnv(&h->env) != SQL_SUCCESS) {
+	if (LOGCALL(ae, SQLAllocEnv, (&h->env)) != SQL_SUCCESS) {
 		TI->Errmsg = "SQLAllocEnv failed!";
  eret:
 		*rc = DB_Error;
@@ -1463,8 +1490,8 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 		if (!dsn)
 			completion = SQL_DRIVER_NOPROMPT;
 #endif
-		i = SQLDriverConnect(h->hc, winfo.hw, UC dsname, SQL_NTS, cs,
-				sizeof(cs), &cs_len, completion);
+		i = LOGCALL(ae, SQLDriverConnect, (h->hc, winfo.hw, UC dsname, SQL_NTS, cs,
+				sizeof(cs), &cs_len, completion));
 		if ((i == SQL_SUCCESS
 		 ||  i == SQL_SUCCESS_WITH_INFO) && !(*dsp = conn_ds(h, cs))) {
 			sprintf(TI->Errmsg = (char*)TM(strlen(CC cs) + 64),
@@ -1476,7 +1503,7 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 	else {
 		if (!(s = get_ext(dsname))) {
 			wantretry = 0;
-			i = SQLConnect(h->hc, UC dsname, SQL_NTS, 0, 0, 0, 0);
+			i = LOGCALL(ae, SQLConnect, (h->hc, UC dsname, SQL_NTS, 0, 0, 0, 0));
 			if (i == SQL_SUCCESS || i == SQL_SUCCESS_WITH_INFO) {
 				*dsp = ds_alloc(h, dsname);
 				cs[0] = 0;
@@ -1514,7 +1541,7 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 		/* get_dsn whenever possible, but this can lead the wrong   */
 		/* DBQ= assignment by SQLDriverConnect.			    */
 
-		if (!sqlp && (driver = get_dsn(h,ds)))
+		if (!sqlp && (driver = LOGCALLP(ae, get_dsn, (h,ds))))
 			dreq = "DSN=";
 		else {
 			driver = (char*)ds->driver;
@@ -1531,8 +1558,8 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 			printf("Calling SQLDriverConnect(\"%s\")\n", s1);
 			fflush(stdout);
 			}
-		i = SQLDriverConnect(h->hc, winfo.hw, UC s1, SQL_NTS, cs, sizeof(cs),
-			&cs_len, SQL_DRIVER_COMPLETE);
+		i = LOGCALL(ae, SQLDriverConnect, (h->hc, winfo.hw, UC s1, SQL_NTS, cs, sizeof(cs),
+			&cs_len, SQL_DRIVER_COMPLETE));
 		if (i != SQL_SUCCESS && i != SQL_SUCCESS_WITH_INFO) {
 			if (verbose)
 				printf("Failed to connect with DRIVER=\"%s\"\n", driver);
@@ -1570,12 +1597,14 @@ Connect(HInfo *h, DRV_desc **dsp, int *rc, char **sqlp)
 		TI->Errmsg = "Botch in Connect(): *dsp = 0";
 		goto eret;
 		}
+	LOG(ae, "Connect: leave");
 	return tname;
 	}
 
  static void
 cleanup(HInfo *h)
 {
+	LOG(h->AE, "cleanup: enter");
 	freestmt(&h->hs);
 	if (h->hc != SQL_NULL_HDBC) {
 		SQLDisconnect(h->hc);
@@ -1583,16 +1612,18 @@ cleanup(HInfo *h)
 		}
 	if (h->env != SQL_NULL_HENV)
 		SQLFreeEnv(h->env);
+	LOG(h->AE, "cleanup: leave");
 	}
 
  static char *
 getname(HInfo *h, int *dbq)
 {
-	AmplExports *ae;
+	AmplExports *ae = h->AE;
 	TableInfo *TI;
 	char *dsn, *s, *s0, *s1;
 	size_t L;
 
+	LOG(ae, "getname");
 	TI = h->TI;
 	s = TI->strings[1];	/* DSN=...;... */
 	*dbq = 0;
@@ -1636,7 +1667,7 @@ getname(HInfo *h, int *dbq)
  static char *
 sql_type(HInfo *h, int odbctype, unsigned int *tprec)
 {
-	AmplExports *ae;
+	AmplExports *ae = h->AE;
 	SQLLEN_t len;
 	HSTMT hs = h->hs;
 	char nbuf[256], *rv;
@@ -1811,6 +1842,7 @@ Write_odbc(AmplExports *ae, TableInfo *TI)
 #endif
 	char **quoted_colnames = 0;
 
+	LOG(ae, "Write_odbc");
 	if ((i = ODBC_check(ae, TI, &h)))
 		return i;
 	rc = DB_Error;
@@ -2071,7 +2103,7 @@ permute(int nf, int nt, int *p, char **namf, int *zf, DBColinfo *dbc, int *zt)
  static int
 needprec(HInfo *h, DBColinfo *dbc, int col_index)
 {
-	AmplExports *ae;
+	AmplExports *ae = h->AE;
 	HSTMT hs;
 	SDWORD t;
 	SQLLEN_t len;
@@ -2215,6 +2247,7 @@ select_stmt(AmplExports *ae, TableInfo *TI, char *tname, size_t L)
 
 	/* input L == strlen(tname) */
 
+	LOG(ae, "select_stmt");
 	nc = TI->arity + TI->ncols;
 	cn = TI->colnames;
 	cne = cn + nc;
@@ -2276,6 +2309,7 @@ Read_odbc(AmplExports *ae, TableInfo *TI)
 		};
 	static int first = 1;
 
+	LOG(ae, "Read_odbc");
 	if ((i = ODBC_check(ae, TI, &h)))
 		return i;
 	if (!(dsn = getname(&h, &dbq)))
@@ -2296,7 +2330,7 @@ Read_odbc(AmplExports *ae, TableInfo *TI)
 		/* This may be more efficient, but causes case to be ignored */
 		/* with at least some ODBC drivers, threatening confusion. */
 		sbuf = select_stmt(ae, TI, tname, L);
-		if ((i = SQLPrepare(hs = h.hs, sbuf, SQL_NTS)) == SQL_SUCCESS
+		if ((i = LOGCALL(ae, SQLPrepare, (hs = h.hs, sbuf, SQL_NTS))) == SQL_SUCCESS
 		 ||  i == SQL_SUCCESS_WITH_INFO)
 			goto select_worked;
 #endif
@@ -2315,7 +2349,7 @@ Read_odbc(AmplExports *ae, TableInfo *TI)
 		return DB_Error;
 		}
  /*select_worked:*/
-	if (prcnr(&h, "SQLNumResultCols", SQLNumResultCols(hs, &ncols))) {
+	if (prcnr(&h, "SQLNumResultCols", LOGCALL(ae, SQLNumResultCols, (hs, &ncols)))) {
 		L += strlen(dsn);
 		sprintf(TI->Errmsg = (char*)TM(L + 32),
 			"Table %s does not appear in \"%s\".", tname, dsn);
@@ -2454,7 +2488,10 @@ Read_odbc(AmplExports *ae, TableInfo *TI)
 	if (prc(&h, "SQLExecute", SQLExecute(hs)))
 		goto badret;
 	db = TI->cols;
+	LOG(ae, "enter fetch loop %d", h.skip_addrows);
 	while((i = SQLFetch(hs)) == SQL_SUCCESS || i == SQL_SUCCESS_WITH_INFO) {
+		if (h.skip_addrows)
+			continue;
 		for(i = 0; i < nf; i++, db++) {
 			dbc = dbc0 + p[i];
 			switch(dbc->mytype) {
@@ -2502,6 +2539,7 @@ Read_odbc(AmplExports *ae, TableInfo *TI)
 		for(i = nk[1]; i--;)
 			*cd[i] = 0;	/* to bypass MS Excel empty-cell bug */
 		}
+	LOG(ae, "leave fetch loop");
 	cleanup(&h);
 	return DB_Done;
 	}
@@ -2729,6 +2767,7 @@ Adjust_ampl_odbc(HInfo *h, char *tname, TIMESTAMP_STRUCT ****tsqp,
 	size_t L, Lt;
 
 	ae = h->AE;
+	LOG(ae, "Adjust_ampl_odbc");
 	*deltry = 0;
 	ntimes = h->ntimes;
 	h->totbadtimes = nn = rc = 0;
