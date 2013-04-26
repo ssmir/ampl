@@ -156,6 +156,7 @@ Malloc(AmplExports *ae, size_t len)
 	vfprintf(log_file, format, args);
 	va_end(args);
 	fputc('\n', log_file);
+	fflush(log_file);
 	}
 
  static int LOGRETURN(AmplExports *ae, const char *func_name, int result) {
