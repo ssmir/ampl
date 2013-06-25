@@ -798,6 +798,24 @@ above single-word phrases, denoting them with "Single-word phrase".
                         commands to select a single objective for the solver
                         (CPLEX) to see.
 
+     objrep             Whether to replace
+                                minimize obj: v;
+                        with
+                                minimize obj: f(x)
+                        when variable v appears linearly in exactly one
+                        constraint of the form
+                                s.t. c: v >= f(x);
+                        or
+                                s.t. c: v == f(x);
+                        Possible objrep values:
+                                0 = no
+                                1 = yes for v >= f(x)
+                                2 = yes for v == f(x) (default)
+                                3 = yes in both cases
+                        For maximization problems, ">= f(x)" is changed to
+                        "<= f(x)" in the description above.  This is new
+                        with driver version 20130622.
+
      optimality         Tolerance for optimality of reduced costs.
                         Default 1e-6; must be between 1e-9 and 1e-1.
 
@@ -1192,6 +1210,14 @@ above single-word phrases, denoting them with "Single-word phrase".
 
      sos2               0 or 1 (default 1): Whether to tell CPLEX about SOS2
                         constraints for nonconvex piecewise-linear terms.
+
+     splitcuts          Whether to use lift-and-project cuts on MIP problems
+                        (new for CPLEX 12.5.1):
+                                -1 = no
+                                 0 = automatic choice (default)
+                                 1 = moderate use
+                                 2 = aggressive use
+                                 3 = very aggressive use
 
      startalg           Synonym for "mipstartalg".
 

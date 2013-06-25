@@ -161,7 +161,8 @@ mdbl_values {
 	set_pooldual	= 24,
 	set_resolve	= 25,
 	set_cutstats	= 26,
-	set_incompat	= 27
+	set_incompat	= 27,
+	set_objrep	= 28
 	};
 #ifdef CPX_PARAM_FEASOPTMODE /* >= 9.2b */
 #define Uselazy
@@ -172,7 +173,7 @@ mdbl_values {
 	};
 
  static mint_values
-mint_val[28] = {
+mint_val[29] = {
 	/* set_crossover */	{0, 2, 1},
 	/* set_dualthresh */	{-0x7fffffff, 0x7fffffff, 0},
 	/* set_netopt */	{0, 2, 1},
@@ -204,7 +205,8 @@ mint_val[28] = {
 	/* set_pooldual */	{0, 1, 0},
 	/* set_resolve */	{0, 1, 1},
 	/* set_cutstats */	{0, 1, 0},
-	/* set_incompat */	{0, 2, 1}
+	/* set_incompat */	{0, 2, 1},
+	/* set_objrep */	{0, 3, 2}
 	};
 
  static mdbl_values
@@ -240,12 +242,13 @@ mdbl_val[] = {
 #define Resolve		mint_val[25].val
 #define cutstats	mint_val[26].val
 #define Incompat	mint_val[27].val
+#define objrep		mint_val[28].val
 #define dual_ratio	mdbl_val[0].val
 
  static int hybmethod = CPX_ALG_PRIMAL;
  static int netiters = -1;
  static CPXFILEptr Logf;
- static char cplex_version[] = "AMPL/CPLEX with bad license\0\nAMPL/CPLEX Driver Version 20130606\n";
+ static char cplex_version[] = "AMPL/CPLEX with bad license\0\nAMPL/CPLEX Driver Version 20130622\n";
  static char *baralgname, *endbas, *endsol, *endtree, *endvec, *logfname;
  static char *paramfile, *poolstub, *pretunefile, *pretunefileprm;
  static char *startbas, *startsol, *starttree, *startvec, *tunefile, *tunefileprm;
@@ -1637,6 +1640,7 @@ sf_parm(Option_Info *oi, keyword *kw, char *v)
 	{ "objdifference", sf_dbl,	VP CPX_PARAM_OBJDIF },
 #endif
 	{ "objno",	sf_mint,	VP set_objno },
+	{ "objrep",	sf_mint,	VP set_objrep },
 	{ "oldpricing",	sf_int,		VP CPX_PARAM_OLDPRICING },
 	{ "optimality",	sf_dbl,		VP CPX_PARAM_EPOPT },
 	{ "optimize",	sf_known,	VP set_primalopt },
@@ -1859,7 +1863,7 @@ sf_parm(Option_Info *oi, keyword *kw, char *v)
 
  static Option_Info Oinfo = { "cplex", 0, "cplex_options",
 				keywds, nkeywds, 0, cplex_version,
-				0,0,0,0,0, 20130606 };
+				0,0,0,0,0, 20130622 };
 
  static void
 badlic(int rc, int status)
@@ -2984,6 +2988,8 @@ amplin(ASL *asl, cpxlp **pcpx, FILE **nl, dims *d, int *nelqp, int *nintp, char 
 #ifdef Uselazy
 	LazyInfo LI;
 #endif /*Uselazy*/
+	static int repmap[4] = { 0, ASL_obj_replace_ineq,  ASL_obj_replace_eq,
+				    ASL_obj_replace_ineq | ASL_obj_replace_eq };
 
 	/* change default display to 0 */
 	CPXsetintparam(Env, CPX_PARAM_SIMDISPLAY, 0);
@@ -3078,7 +3084,8 @@ amplin(ASL *asl, cpxlp **pcpx, FILE **nl, dims *d, int *nelqp, int *nintp, char 
 	    || (nint && mipstval))
 		want_xpi0 = 3;
 	want_deriv = 0;
-	qp_read(*nl,ALLOW_CLP);
+	qp_read(*nl, ALLOW_CLP | repmap[objrep]);
+	nqc = nlc;	/* may have been adjusted */
 	*nl = 0;	/* Indicate closed file -- in case we're */
 			/* subsequently interrupted. */
 	if (obj_no >= 0 && obj_no < n_obj

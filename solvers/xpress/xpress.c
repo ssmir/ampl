@@ -68,7 +68,15 @@ typedef struct
 	int miqp;
   } dims;
 
- static int mipstart = 1, mipststat = 1, Ray = 0, Round = 1, sos = 1, sos2 = 1;
+ static int
+	Ray = 0,
+	Round = 1,
+	lazy = 1,
+	mipstart = 1,
+	mipststat = 1,
+	objrep = 2,
+	sos = 1,
+	sos2 = 1;
 
 static char *set_known(Option_Info *oi, keyword *kw, char *v);
 static char *set_int(Option_Info *oi, keyword *kw, char *v);
@@ -208,7 +216,7 @@ static char
 			-1 = automatic choice (default with just \"barrier\")\n\
 			 1 = infeasible-start barrier algorithm\n\
 			 2 = homogeneous self-dual barrier algorithm\n\
-			 3 = start with 2 and possibly switch to 1 while solving",
+			 3 = start with 2 and maybe switch to 1 while solving",
 #endif
 	barcrash_desc[]		= "choice of crash procedure for crossover:\n\
 			0 = no crash\n\
@@ -240,8 +248,8 @@ static char
 			-1 = automatic choice (default with just \"barrier\")\n\
 			Values >= 0 are the sum of:\n\
 			1 = use \"standard\" regularization\n\
-			2 = use \"reduced\" regularization: less perturbation than\n\
-				\"standard\" regularization\n\
+			2 = use \"reduced\" regularization: less perturbation\n\
+				than \"standard\" regularization\n\
 			4 = keep dependent rows in the KKT system\n\
 			8 = keep degenerate rows in the KKT system",
 #endif
@@ -492,6 +500,12 @@ static char
 		"number of global infeasible entities for which to create\n\
 			lift-and-project cuts during each round of Gomory cuts\n\
 			at the top node (default 50)",
+	lazy_desc[]		=
+		"whether to regard constraints with nonzero .lazy suffix\n\
+			values as lazy (i.e., delayed) constraints if the\n\
+			problem is a MIP:\n\
+				0 = no\n\
+				1 = yes (default)",
 	lnpiterlimit_desc[]	=
 		"maximum iterations for each lift-and-project cut\n\
 			(default 10)",
@@ -610,6 +624,20 @@ static char
 			    sibling nodes if available, else from deepest nodes\n\
 			4 = best first for breadthfirst nodes, then local first\n\
 			5 = pure depth first:  choose among deepest nodes",
+	objrep_desc[]		= "Whether to replace\n\t\t\t\tminimize obj: v;\n\
+			with\n\
+				minimize obj: f(x)\n\
+			when variable v appears linearly in exactly onet\n\
+			constrain of the form\n\
+				s.t. c: v >= f(x);\n\
+			or\n\
+				s.t. c: v == f(x);\n\
+			Possible objrep values:\n\
+				0 = no\n\
+				1 = yes for v >= f(x) (default)\n\
+				2 = yes for v == f(x)\n\
+				3 = yes in both cases\n\
+			For a maximization problem, \"<=\" replaces \">=\".",
 	optimalitytol_desc[]	= "tolerance on reduced cost (default 1e-6)",
 	outlev_desc[]		= "message level:\n\
 			1 = all\n\
@@ -963,6 +991,7 @@ static keyword keywds[]={
   KW("invertmin",	set_int, XPRS_INVERTMIN,	invertmin_desc),
   KW("keepbasis",	set_int, XPRS_KEEPBASIS,	keepbasis_desc),
   KW("keepnrows", 	set_int, XPRS_KEEPNROWS,	keepnrows_desc),
+  KW("lazy",		I_val, &lazy,			lazy_desc),
   KW("lnpbest",		set_int, XPRS_LNPBEST,		lnpbest_desc),
   KW("lnpiterlimit",	set_int, XPRS_LNPITERLIMIT,	lnpiterlimit_desc),
   KW("localchoice",	set_int, XPRS_LOCALCHOICE,	localchoice_desc),
@@ -1009,6 +1038,7 @@ static keyword keywds[]={
   KW("nodefilebias",	set_dbl, XPRS_GLOBALFILEBIAS,	nodefilebias_desc),
   KW("nodeselection",	set_int, XPRS_NODESELECTION,	nodeselection_desc),
   KW("objno",		I_val, &nobj,			"objective number (0=none, 1=first...)"),
+  KW("objrep",		I_val, &objrep,			objrep_desc),
   KW("optimalitytol",	set_dbl, XPRS_OPTIMALITYTOL,	optimalitytol_desc),
   KW("outlev",		I_val,	 &prtmsg,		outlev_desc),
   KW("outputtol",	set_dbl, XPRS_OUTPUTTOL,	outputtol_desc),
@@ -1079,7 +1109,7 @@ static keyword keywds[]={
      };
 
 static Option_Info Oinfo = { "xpress", NULL, "xpress_options",
-           keywds,nkeywds,0,"XPRESS", 0,0,0,0,0, 20130419 };
+           keywds,nkeywds,0,"XPRESS", 0,0,0,0,0, 20130622 };
 
  static char *
 strcpy1(char *t, const char *s)
@@ -1184,6 +1214,7 @@ static void killtempprob(void)
 static SufDecl
 suftab[] = {
   { "direction", 0, ASL_Sufkind_var },
+  { "lazy", 0, ASL_Sufkind_con },
   { "priority", 0, ASL_Sufkind_var },
   { "ref", 0, ASL_Sufkind_var | ASL_Sufkind_real },
   { "sos", 0, ASL_Sufkind_var },
@@ -1889,6 +1920,35 @@ indicator_constrs(void)
 	free(II.rn);
 	}
 
+ static void
+lazy_adj(int *z)
+{
+	const char *s;
+	int i, j, nc, nlin, nq, nqc;
+
+	nc = n_con;
+	nqc = nlc;
+	for(i = nq = 0; i < nqc; ++i)
+		if (z[i])
+			++nq;
+	if (nq) {
+		s = "s" + (nq == 1);
+		fprintf(Stderr, "Ignoring .lazy suffix%s on %d quadratic constraint%s.\n",
+			s, nq, s);
+		}
+	for(nlin = 0; i < nc; ++i)
+		if (z[i])
+			++nlin;
+	if (!nlin)
+		return;
+	j = 0;
+	for(i = nqc; i < nc; ++i)
+		if (z[i])
+			z[j++] = i;
+	if (XPRSloaddelayedrows(prob, j, z))
+		xperror("load delayed rows");
+	}
+
 /************************************************/
 /* Read the matrix and call loadprob/loadglobal */
 /************************************************/
@@ -1896,6 +1956,7 @@ indicator_constrs(void)
 amplin(char *stub, char *argv[], dims *d)
 {
  FILE *nl;
+ SufDesc *lzd;
  char *qgtype, *qrtype, *qstype;
  double *L, *U, *a, *dref, *obj, *q, *q0, *q1, *qe, *qv, *rhs, *rng;
  fint *colq, nelq, *rowq, *rq, *rq1;
@@ -1911,6 +1972,8 @@ amplin(char *stub, char *argv[], dims *d)
 #define ALLOW_CLP 0
 #define nlogc 0
 #endif
+ static int repmap[4] = { 0, ASL_obj_replace_ineq,  ASL_obj_replace_eq,
+			     ASL_obj_replace_ineq | ASL_obj_replace_eq };
 
  nl = jac0dim(stub, (fint)strlen(stub));
 
@@ -1953,7 +2016,11 @@ amplin(char *stub, char *argv[], dims *d)
  ngents = niv /*+ nbv*/ + nlvbi + nlvci + nlvoi;
  if (mipstart && ngents + nbv)
 	want_xpi0 = 5;
- qp_read(nl,ALLOW_CLP);
+ if (objrep > 3)
+	objrep = 3;
+ else if (objrep < 0)
+	objrep = 0;
+ qp_read(nl,ALLOW_CLP | repmap[objrep]);
  if(logfile != NULL)
  {
   if(XPRSsetlogfile(prob,logfile))
@@ -2190,6 +2257,8 @@ amplin(char *stub, char *argv[], dims *d)
   {
    optimopt[1]='g';       /* Search will be global */
    mip_priorities();      /* using provided priorities */
+   if (lazy && (lzd = suf_get("lazy", ASL_Sufkind_con)) && lzd->u.i)
+	lazy_adj(lzd->u.i);
   }
   if (mipstart && optimopt[1] == 'g' && X0)
 	XPRSloadmipsol(prob, X0, &iret);
